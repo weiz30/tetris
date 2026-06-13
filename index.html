@@ -632,6 +632,7 @@
     };
     const TYPES = Object.keys(SHAPES);
     const LEADERBOARD_KEY = 'code-blocks-tetris-leaderboard-v1';
+    const PLAYER_NAME_KEY = 'code-blocks-tetris-player-name';
 
     const boardCanvas = document.getElementById('board');
     const ctx = boardCanvas.getContext('2d');
@@ -669,6 +670,7 @@
     let muted = true;
     let audioContext;
     let pendingResult;
+    let lastAutoSavedKey;
 
     function createBoard() {
       return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -699,7 +701,9 @@
       startedAt = 0;
       endedAt = 0;
       pendingResult = null;
+      lastAutoSavedKey = '';
       setOverlay('Ready?', '清除方塊、累積分數，通過 10 關就破關。', true);
+      els.playerNameMain.value = localStorage.getItem(PLAYER_NAME_KEY) || '';
       updateUi();
       renderLeaderboard();
       draw();
@@ -859,7 +863,9 @@
       endedAt = Date.now();
       els.status.textContent = 'Game Over';
       pendingResult = buildResult('Game Over');
-      showResultOverlay('Game Over', `你拿到 ${score.toLocaleString()} 分，留下名字加入排行榜。`);
+      if (!autoSaveScore()) {
+        showResultOverlay('Game Over', `你拿到 ${score.toLocaleString()} 分，留下名字加入排行榜。`);
+      }
       playTone(130, 0.2);
     }
 
@@ -869,7 +875,9 @@
       endedAt = Date.now();
       els.status.textContent = 'Cleared';
       pendingResult = buildResult('Cleared');
-      showResultOverlay('Mission Complete', `10 關破關！總分 ${score.toLocaleString()}，分速 ${getScoreRate()}。`);
+      if (!autoSaveScore()) {
+        showResultOverlay('Mission Complete', `10 關破關！總分 ${score.toLocaleString()}，分速 ${getScoreRate()}。`);
+      }
       playTone(740, 0.12);
       setTimeout(() => playTone(920, 0.12), 140);
       setTimeout(() => playTone(1120, 0.18), 280);
@@ -1045,16 +1053,30 @@
       localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries));
     }
 
+    function autoSaveScore() {
+      const name = els.playerNameMain.value.trim();
+      if (!name || !pendingResult) return false;
+      saveScore(name, true);
+      return true;
+    }
+
     function saveScore(name) {
       if (!pendingResult) return;
       const cleanName = name.trim().replace(/\s+/g, ' ').slice(0, 18) || 'Player';
       els.playerNameMain.value = cleanName;
+      localStorage.setItem(PLAYER_NAME_KEY, cleanName);
+      const resultKey = `${pendingResult.result}-${pendingResult.score}-${pendingResult.lines}-${pendingResult.elapsedSeconds}`;
+      if (resultKey === lastAutoSavedKey) {
+        setOverlay('Score Saved', `${cleanName} 的這局已經在排行榜裡。`, true);
+        return;
+      }
       const entry = { ...pendingResult, name: cleanName };
       const entries = readLeaderboard()
         .concat(entry)
         .sort((a, b) => b.score - a.score || b.lines - a.lines || a.elapsedSeconds - b.elapsedSeconds)
         .slice(0, 10);
       writeLeaderboard(entries);
+      lastAutoSavedKey = resultKey;
       pendingResult = null;
       renderLeaderboard();
       setOverlay('Score Saved', `${cleanName} 已加入排行榜，按 Start 再玩一次。`, true);
@@ -1131,6 +1153,9 @@
     document.getElementById('muteBtn').addEventListener('click', event => {
       muted = !muted;
       event.currentTarget.textContent = muted ? 'Sound Off' : 'Sound On';
+    });
+    els.playerNameMain.addEventListener('input', event => {
+      localStorage.setItem(PLAYER_NAME_KEY, event.target.value.trim().slice(0, 18));
     });
 
     document.querySelectorAll('[data-action]').forEach(button => {
