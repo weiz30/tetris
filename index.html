@@ -349,6 +349,91 @@
       background: var(--accent);
     }
 
+    .leaderboard {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .leader-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #141a24;
+      font-size: 13px;
+    }
+
+    .leader-rank {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-weight: 850;
+    }
+
+    .leader-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+
+    .leader-meta {
+      grid-column: 2 / -1;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .leader-score {
+      color: var(--accent);
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .empty-board {
+      padding: 12px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .name-entry {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .name-entry input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 12px;
+      color: var(--ink);
+      background: #111722;
+      font: inherit;
+    }
+
+    .name-entry input:focus {
+      outline: 2px solid rgba(66, 211, 146, 0.35);
+      border-color: var(--accent);
+    }
+
+    .name-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
     @media (max-width: 980px) {
       .layout {
         grid-template-columns: 1fr minmax(300px, 420px);
@@ -479,6 +564,13 @@
             <div class="level-list" id="levelList"></div>
           </div>
         </section>
+
+        <section class="panel" aria-label="Leaderboard">
+          <div class="panel-inner">
+            <p class="mini-title">Leaderboard</p>
+            <div class="leaderboard" id="leaderboard"></div>
+          </div>
+        </section>
       </aside>
     </main>
   </div>
@@ -509,6 +601,7 @@
       Z: [[1,1,0],[0,1,1],[0,0,0]]
     };
     const TYPES = Object.keys(SHAPES);
+    const LEADERBOARD_KEY = 'code-blocks-tetris-leaderboard-v1';
 
     const boardCanvas = document.getElementById('board');
     const ctx = boardCanvas.getContext('2d');
@@ -524,7 +617,8 @@
       overlay: document.getElementById('overlay'),
       overlayTitle: document.getElementById('overlayTitle'),
       overlayText: document.getElementById('overlayText'),
-      levelList: document.getElementById('levelList')
+      levelList: document.getElementById('levelList'),
+      leaderboard: document.getElementById('leaderboard')
     };
 
     let board;
@@ -539,9 +633,11 @@
     let paused;
     let won;
     let startedAt;
+    let endedAt;
     let animationId;
     let muted = true;
     let audioContext;
+    let pendingResult;
 
     function createBoard() {
       return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -570,8 +666,11 @@
       paused = false;
       won = false;
       startedAt = 0;
+      endedAt = 0;
+      pendingResult = null;
       setOverlay('Ready?', '清除方塊、累積分數，通過 10 關就破關。', true);
       updateUi();
+      renderLeaderboard();
       draw();
     }
 
@@ -591,6 +690,8 @@
         running = true;
         paused = false;
         startedAt = Date.now();
+        endedAt = 0;
+        pendingResult = null;
         setOverlay('', '', false);
         els.status.textContent = 'Playing';
         cancelAnimationFrame(animationId);
@@ -724,16 +825,20 @@
     function gameOver() {
       running = false;
       paused = false;
+      endedAt = Date.now();
       els.status.textContent = 'Game Over';
-      setOverlay('Game Over', `你拿到 ${score.toLocaleString()} 分，按 Start 再挑戰一次。`, true);
+      pendingResult = buildResult('Game Over');
+      showResultOverlay('Game Over', `你拿到 ${score.toLocaleString()} 分，留下名字加入排行榜。`);
       playTone(130, 0.2);
     }
 
     function winGame() {
       running = false;
       won = true;
+      endedAt = Date.now();
       els.status.textContent = 'Cleared';
-      setOverlay('Mission Complete', `10 關破關！總分 ${score.toLocaleString()}，分速 ${getScoreRate()}。`, true);
+      pendingResult = buildResult('Cleared');
+      showResultOverlay('Mission Complete', `10 關破關！總分 ${score.toLocaleString()}，分速 ${getScoreRate()}。`);
       playTone(740, 0.12);
       setTimeout(() => playTone(920, 0.12), 140);
       setTimeout(() => playTone(1120, 0.18), 280);
@@ -840,8 +945,86 @@
 
     function getScoreRate() {
       if (!startedAt) return 0;
-      const minutes = Math.max((Date.now() - startedAt) / 60000, 0.1);
+      const end = endedAt || Date.now();
+      const minutes = Math.max((end - startedAt) / 60000, 0.1);
       return Math.round(score / minutes);
+    }
+
+    function getElapsedSeconds() {
+      if (!startedAt) return 0;
+      const end = endedAt || Date.now();
+      return Math.max(0, Math.round((end - startedAt) / 1000));
+    }
+
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function buildResult(result) {
+      return {
+        result,
+        score,
+        scoreRate: getScoreRate(),
+        level,
+        lines,
+        elapsedSeconds: getElapsedSeconds(),
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    function showResultOverlay(title, text) {
+      els.overlayTitle.textContent = title;
+      els.overlayText.innerHTML = `
+        ${text}
+        <form class="name-entry" id="scoreForm">
+          <input id="playerName" name="playerName" maxlength="18" autocomplete="name" placeholder="玩家名稱" required>
+          <div class="name-actions">
+            <button class="btn primary" type="submit">Save Score</button>
+            <button class="btn" type="button" id="skipSave">Skip</button>
+          </div>
+        </form>
+      `;
+      els.overlay.classList.add('show');
+      const form = document.getElementById('scoreForm');
+      const input = document.getElementById('playerName');
+      const skip = document.getElementById('skipSave');
+      input.focus();
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        saveScore(input.value);
+      });
+      skip.addEventListener('click', () => {
+        pendingResult = null;
+        setOverlay(title, '按 Start 再玩一次。', true);
+      });
+    }
+
+    function readLeaderboard() {
+      try {
+        return JSON.parse(localStorage.getItem(LEADERBOARD_KEY) || '[]');
+      } catch {
+        return [];
+      }
+    }
+
+    function writeLeaderboard(entries) {
+      localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries));
+    }
+
+    function saveScore(name) {
+      if (!pendingResult) return;
+      const cleanName = name.trim().replace(/\s+/g, ' ').slice(0, 18) || 'Player';
+      const entry = { ...pendingResult, name: cleanName };
+      const entries = readLeaderboard()
+        .concat(entry)
+        .sort((a, b) => b.score - a.score || b.lines - a.lines || a.elapsedSeconds - b.elapsedSeconds)
+        .slice(0, 10);
+      writeLeaderboard(entries);
+      pendingResult = null;
+      renderLeaderboard();
+      setOverlay('Score Saved', `${cleanName} 已加入排行榜，按 Start 再玩一次。`, true);
     }
 
     function updateUi() {
@@ -863,6 +1046,36 @@
         row.innerHTML = `<span>${i}</span><span>${(i - 1) * LINES_PER_LEVEL}-${i * LINES_PER_LEVEL} lines · speed ${speed}</span>`;
         els.levelList.appendChild(row);
       }
+    }
+
+    function renderLeaderboard() {
+      const entries = readLeaderboard();
+      els.leaderboard.innerHTML = '';
+      if (!entries.length) {
+        els.leaderboard.innerHTML = '<div class="empty-board">尚無紀錄，完成一局後即可保存分數。</div>';
+        return;
+      }
+      entries.forEach((entry, index) => {
+        const row = document.createElement('div');
+        row.className = 'leader-row';
+        row.innerHTML = `
+          <span class="leader-rank">${index + 1}</span>
+          <span class="leader-name">${escapeHtml(entry.name)}</span>
+          <span class="leader-score">${Number(entry.score).toLocaleString()}</span>
+          <span class="leader-meta">${entry.result} · Lv ${entry.level}/10 · ${entry.lines} lines · ${entry.scoreRate}/min · ${formatTime(entry.elapsedSeconds)}</span>
+        `;
+        els.leaderboard.appendChild(row);
+      });
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
     }
 
     function playTone(freq, duration) {
